@@ -32,80 +32,97 @@
   (define (hash-view-info-all-names hvi)
     (with-syntax ([(name make make-mut name? (uc-get ...) (get ...))
                    (hash-view-info-names-stx hvi)])
-      (filter identifier? (syntax->list #'(name make make-mut name? #| uc-get ... |# get ...)))))
-
-  )
+      (filter identifier? (syntax->list #'(name make make-mut name? #| uc-get ... |# get ...))))))
 
 (define-syntax (hash-view stx)
-  (define-syntax-class fieldspec #:attributes (name mk-default ref-default [decl 1])
-    (pattern name:id
-             #:attr mk-default #f
-             #:attr ref-default #f
-             #:with (decl ...) null)
-    (pattern [name:id #:default default:constant]
-             #:with mk-default #'default.quoted
-             #:with ref-default #'default.quoted
-             #:with (decl ...) null)
-    (pattern [name:id #:default default0:expr]
-             #:with (tmp) (generate-temporaries #'(name))
-             #:with mk-default #'(tmp)
-             #:with ref-default #'tmp
-             #:with (decl ...) #'((define tmp (let ([tmp default0]) (lambda () tmp))))))
-  (define-syntax-class constant #:attributes (quoted)
-    #:literals (quote)
-    (pattern (quote datum)
-             #:with quoted this-syntax)
-    (pattern datum
-             #:when (let ([d (syntax->datum #'datum)]) (or (boolean? d) (number? d)))
-             #:when (free-identifier=? (datum->syntax #'datum '#%datum) #'#%datum)
-             #:with quoted #'(quote datum)))
+  (define-syntax-class required-field #:attributes (name)
+    (pattern name:id))
+  (define-syntax-class optional-field #:attributes (name mk ref [decl 1])
+    (pattern [name:id #:default :defaultexpr]
+             #:with mk #'mk0)
+    (pattern [name:id #:default/omit :defaultexpr]
+             #:with mk #'hash-view-undefined))
+  (define-syntax-class defaultexpr
+    #:attributes (mk0 ref [decl 1])
+    (pattern e:expr
+             #:with (tmp) (generate-temporaries '(tmp))
+             #:with mk0 #'(tmp)
+             #:with ref #'tmp
+             #:with (decl ...) #'((define tmp (let ([tmp e]) (lambda () tmp))))))
   (define-splicing-syntax-class mut-clause
     (pattern (~seq #:immutable) #:attr mode 'immutable)
     (pattern (~seq #:accept-mutable) #:attr mode 'accept-mutable)
     (pattern (~seq) #:attr mode 'accept-mutable))
+  ;; ----
   (syntax-parse stx
-    [(_ name (f:fieldspec ...) mc:mut-clause)
-     (for/fold ([seen-default? #f])
-               ([f (in-list (syntax->list #'(f ...)))]
-                [default (in-list (attribute f.ref-default))])
-       (when (and seen-default? (not default))
-         (raise-syntax-error #f "non-optional field following optional field" stx f))
-       (or seen-default? (and default #t)))
+    [(_ name (rf:required-field ... of:optional-field ...) mc:mut-clause)
+     #:attr make-mut-name (case (attribute mc.mode)
+                            [(immutable) #f]
+                            [(accept-mutable) (format-id #'name "make-mutable-~a" #'name)])
+     (define fnamess (list (syntax->list #'(rf.name ...)) (syntax->list #'(of.name ...))))
      (with-syntax ([name? (format-id #'name "~a?" #'name)]
                    [make-name (format-id #'name "make-~a" #'name)]
-                   [make-mut-name
-                    (case (attribute mc.mode)
-                      [(immutable) #f]
-                      [(accept-mutable) (format-id #'name "make-mutable-~a" #'name)])]
-                   [(uc-name-f ...)
-                    (for/list ([fname (in-list (syntax->list #'(f.name ...)))])
-                      (format-id #'HERE "unchecked-~a-~a" #'name fname))]
-                   [(name-f ...)
-                    (for/list ([fname (in-list (syntax->list #'(f.name ...)))])
-                      (format-id #'name "~a-~a" #'name fname))]
+                   [((uc-name-rf ...) (uc-name-of ...))
+                    (for/list ([fnames (in-list fnamess)])
+                      (for/list ([fname (in-list fnames)])
+                        (format-id #'HERE "unchecked-~a-~a" #'name fname)))]
+                   [((name-rf ...) (name-of ...))
+                    (for/list ([fnames (in-list fnamess)])
+                      (for/list ([fname (in-list fnames)])
+                        (format-id #'name "~a-~a" #'name fname)))]
                    [other-check
                     (case (attribute mc.mode)
                       [(immutable) #'(immutable? v)]
                       [else #'#t])])
        #'(begin
-           f.decl ... ...
-           (define (make-name (~? [f.name f.mk-default] f.name) ...)
-             (hasheq (~@ 'f.name f.name) ...))
-           (~? (define (make-mut-name (~? [f.name f.mk-default] f.name) ...)
-                 (let ([h (make-hasheq)]) (hash-set! h 'f.name f.name) ... h)))
+           of.decl ... ...
+           (define (make-name rf.name ... [of.name of.mk] ...)
+             (define h (hasheq (~@ 'rf.name rf.name) ...))
+             (if (pair? '(of.name ...))
+                 (hash-view-set* h (~@ 'of.name of.name) ...)
+                 h))
+           (~? (define (make-mut-name rf.name ... [of.name of.mk] ...)
+                 (let ([h (make-hasheq)])
+                   (hash-set! h 'rf.name rf.name) ...
+                   (hash-view-set*! h (~@ 'of.name of.name) ...)
+                   h)))
+           (define (name? v)
+             (and (hash? v) other-check (hash-has-key? v 'rf.name) ... #t))
+           (define (uc-name-rf v) (hash-ref v 'rf.name)) ...
+           (define (uc-name-of v [default of.ref]) (hash-ref v 'of.name default)) ...
+           (define (name-rf v)
+             (unless (name? v) (raise-argument-error 'name-rf (symbol->string 'name?) v))
+             (uc-name-rf v))
+           ...
+           (define (name-of v [default of.ref])
+             (unless (name? v) (raise-argument-error 'name-of (symbol->string 'name?) v))
+             (uc-name-of v default))
+           ...
            (define-syntax name
              (hash-view-info
               (quote-syntax (name make-name (~? make-mut-name #f) name?
-                                  (uc-name-f ...) (name-f ...)))))
-           (define (name? v)
-             (and (hash? v) other-check
-                  (or (~? (begin (quote f.ref-default) #t)) (hash-has-key? v 'f.name)) ...
-                  #t))
-           (define (uc-name-f v) (hash-ref v 'f.name (~? f.ref-default))) ...
-           (define (name-f v)
-             (unless (name? v) (raise-argument-error 'name-f (symbol->string 'name?) v))
-             (uc-name-f v))
-           ...))]))
+                                  (uc-name-rf ... uc-name-of ...)
+                                  (name-rf ... name-of ...)))))))]))
+
+(define hash-view-undefined
+  (let ()
+    (struct hash-view-undefined ())
+    (hash-view-undefined)))
+
+(define (hash-view-set* h . kvs)
+  (let loop ([h h] [kvs kvs])
+    (match kvs
+      [(list* k v kvs)
+       (loop (if (eq? v hash-view-undefined) h (hash-set h k v)) kvs)]
+      [_ h])))
+
+(define (hash-view-set*! h . kvs)
+  (let loop ([kvs kvs])
+    (match kvs
+      [(list* k v kvs)
+       (unless (eq? v hash-view-undefined) (hash-set! h k v))
+       (loop kvs)]
+      [_ (void)])))
 
 (define-syntax hash-view-out
   (make-provide-transformer
