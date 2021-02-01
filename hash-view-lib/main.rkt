@@ -32,7 +32,9 @@
   (define (hash-view-info-all-names hvi)
     (with-syntax ([(name make make-mut name? (uc-get ...) (get ...))
                    (hash-view-info-names-stx hvi)])
-      (filter identifier? (syntax->list #'(name make make-mut name? #| uc-get ... |# get ...))))))
+      (filter identifier? (syntax->list #'(name make make-mut name? #| uc-get ... |# get ...)))))
+
+  )
 
 (define-syntax (hash-view stx)
   (define-syntax-class fieldspec #:attributes (name mk-default ref-default [decl 1])
@@ -40,17 +42,23 @@
              #:attr mk-default #f
              #:attr ref-default #f
              #:with (decl ...) null)
+    (pattern [name:id #:default default:constant]
+             #:with mk-default #'default.quoted
+             #:with ref-default #'default.quoted
+             #:with (decl ...) null)
     (pattern [name:id #:default default0:expr]
-             #:with (mk-default ref-default decl ...)
-             (syntax-parse #'default0
-               #:literals (quote)
-               [(quote datum) #'(default0 default0)]
-               [datum
-                #:when (let ([d (syntax->datum #'datum)]) (or (boolean? d) (number? d)))
-                #:when (free-identifier=? (datum->syntax #'datum '#%datum) #'#%datum)
-                #'('default0 'default0)]
-               [_ (with-syntax ([(tmp) (generate-temporaries #'(default))])
-                    #'((tmp) tmp (define (tmp) default0)))])))
+             #:with (tmp) (generate-temporaries #'(name))
+             #:with mk-default #'(tmp)
+             #:with ref-default #'tmp
+             #:with (decl ...) #'((define tmp (let ([tmp default0]) (lambda () tmp))))))
+  (define-syntax-class constant #:attributes (quoted)
+    #:literals (quote)
+    (pattern (quote datum)
+             #:with quoted this-syntax)
+    (pattern datum
+             #:when (let ([d (syntax->datum #'datum)]) (or (boolean? d) (number? d)))
+             #:when (free-identifier=? (datum->syntax #'datum '#%datum) #'#%datum)
+             #:with quoted #'(quote datum)))
   (define-splicing-syntax-class mut-clause
     (pattern (~seq #:immutable) #:attr mode 'immutable)
     (pattern (~seq #:accept-mutable) #:attr mode 'accept-mutable)
