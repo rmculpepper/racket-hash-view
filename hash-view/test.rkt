@@ -22,7 +22,7 @@
 
 ;; Check the representation of #:default/omit field:
 (check-equal? (point 1 2) (hasheq 'x 1 'y 2))
-(check-equal? (point 1 2 0) (hasheq 'x 1 'y 2 'z 0))
+(check-equal? (point 1 2 0) (hasheq 'x 1 'y 2))
 (check-equal? (point 1 2 3) (hasheq 'x 1 'y 2 'z 3))
 
 ;; ----------------------------------------

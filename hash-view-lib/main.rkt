@@ -37,16 +37,16 @@
 (define-syntax (hash-view stx)
   (define-syntax-class required-field #:attributes (name)
     (pattern name:id))
-  (define-syntax-class optional-field #:attributes (name mk ref [decl 1])
+  (define-syntax-class optional-field #:attributes (name omit? mk ref [decl 1])
     (pattern [name:id #:default :defaultexpr]
-             #:with mk #'mk0)
+             #:with omit? #'#f)
     (pattern [name:id #:default/omit :defaultexpr]
-             #:with mk #'hash-view-undefined))
+             #:with omit? #'#t))
   (define-syntax-class defaultexpr
-    #:attributes (mk0 ref [decl 1])
+    #:attributes (mk ref [decl 1])
     (pattern e:expr
              #:with (tmp) (generate-temporaries '(tmp))
-             #:with mk0 #'(tmp)
+             #:with mk #'(tmp)
              #:with ref #'tmp
              #:with (decl ...) #'((define tmp (let ([tmp e]) (lambda () tmp))))))
   (define-splicing-syntax-class mut-clause
@@ -79,12 +79,14 @@
            (define (make-name rf.name ... [of.name of.mk] ...)
              (define h (hasheq (~@ 'rf.name rf.name) ...))
              (if (pair? '(of.name ...))
-                 (hash-view-set* h (~@ 'of.name of.name) ...)
+                 (hash-view-set* h (~@ 'of.name of.name (and 'of.omit? (equal? of.name of.mk))) ...)
                  h))
            (~? (define (make-mut-name rf.name ... [of.name of.mk] ...)
                  (let ([h (make-hasheq)])
                    (hash-set! h 'rf.name rf.name) ...
-                   (hash-view-set*! h (~@ 'of.name of.name) ...)
+                   (unless (and 'of.omit? (equal? of.name of.mk))
+                     (hash-set! h 'of.name of.name))
+                   ...
                    h)))
            (define (name? v)
              (and (hash? v) other-check (hash-has-key? v 'rf.name) ... #t))
@@ -104,25 +106,13 @@
                                   (uc-name-rf ... uc-name-of ...)
                                   (name-rf ... name-of ...)))))))]))
 
-(define hash-view-undefined
-  (let ()
-    (struct hash-view-undefined ())
-    (hash-view-undefined)))
-
 (define (hash-view-set* h . kvs)
   (let loop ([h h] [kvs kvs])
     (match kvs
-      [(list* k v kvs)
-       (loop (if (eq? v hash-view-undefined) h (hash-set h k v)) kvs)]
+      [(list* k v omit? kvs)
+       (cond [omit? (loop h kvs)]
+             [else (loop (hash-set h k v) kvs)])]
       [_ h])))
-
-(define (hash-view-set*! h . kvs)
-  (let loop ([kvs kvs])
-    (match kvs
-      [(list* k v kvs)
-       (unless (eq? v hash-view-undefined) (hash-set! h k v))
-       (loop kvs)]
-      [_ (void)])))
 
 (define-syntax hash-view-out
   (make-provide-transformer
