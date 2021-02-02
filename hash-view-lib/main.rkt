@@ -77,10 +77,11 @@
        #'(begin
            of.decl ... ...
            (define (make-name rf.name ... [of.name of.mk] ...)
-             (define h (hasheq (~@ 'rf.name rf.name) ...))
-             (if (pair? '(of.name ...))
-                 (hash-view-set* h (~@ 'of.name of.name (and 'of.omit? (equal? of.name of.mk))) ...)
-                 h))
+             (let* ([h (hasheq (~@ 'rf.name rf.name) ...)]
+                    [h (cond [(and 'of.omit? (equal? of.name of.mk)) h]
+                             [else (hash-set h 'of.name of.name)])]
+                    ...)
+               h))
            (~? (define (make-mut-name rf.name ... [of.name of.mk] ...)
                  (let ([h (make-hasheq)])
                    (hash-set! h 'rf.name rf.name) ...
@@ -105,14 +106,6 @@
               (quote-syntax (name make-name (~? make-mut-name #f) name?
                                   (uc-name-rf ... uc-name-of ...)
                                   (name-rf ... name-of ...)))))))]))
-
-(define (hash-view-set* h . kvs)
-  (let loop ([h h] [kvs kvs])
-    (match kvs
-      [(list* k v omit? kvs)
-       (cond [omit? (loop h kvs)]
-             [else (loop (hash-set h k v) kvs)])]
-      [_ h])))
 
 (define-syntax hash-view-out
   (make-provide-transformer
