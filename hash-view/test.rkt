@@ -42,3 +42,10 @@
 (check-equal? (loc "racket-lang.org") (hasheq 'host "racket-lang.org" 'port 80))
 (check-equal? (loc "racket-lang.org" 80) (hasheq 'host "racket-lang.org" 'port 80))
 (check-equal? (loc "racket-lang.org" 443) (hasheq 'host "racket-lang.org" 'port 443))
+
+;; ----------------------------------------
+
+;; Check opt field before req is required arg in constructor:
+(hash-view optreq ([opt #:default/omit #f] req))
+(check-equal? (procedure-arity optreq) 2)
+(check-equal? (optreq 1 2) (hasheq 'opt 1 'req 2))

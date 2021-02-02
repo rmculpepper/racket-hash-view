@@ -1,5 +1,6 @@
 #lang racket/base
 (require (for-syntax racket/base
+                     racket/list
                      racket/syntax
                      syntax/parse/pre
                      racket/provide-transform
@@ -32,16 +33,31 @@
   (define (hash-view-info-all-names hvi)
     (with-syntax ([(name make make-mut name? (uc-get ...) (get ...))
                    (hash-view-info-names-stx hvi)])
-      (filter identifier? (syntax->list #'(name make make-mut name? #| uc-get ... |# get ...))))))
+      (filter identifier? (syntax->list #'(name make make-mut name? #| uc-get ... |# get ...)))))
+
+  (define (fix-formals formals)
+    ;; Change every optional arg before the last required arg to be required.
+    (define (required? formal) (identifier? formal))
+    (define (optional? formal) (not (required? formal)))
+    (define-values (prefix suffix) (splitf-at-right formals optional?))
+    (append (map (lambda (formal)
+                   (syntax-parse formal
+                     [name:id #'name]
+                     [[name:id _] #'name]))
+                 prefix)
+            suffix)))
 
 (define-syntax (hash-view stx)
-  (define-syntax-class required-field #:attributes (name)
-    (pattern name:id))
-  (define-syntax-class optional-field #:attributes (name omit? mk ref [decl 1])
+  (define-syntax-class field-declaration #:attributes (formal ex)
+    (pattern name:id
+             #:with formal #'name
+             #:with ex #'(#:required name))
     (pattern [name:id #:default :defaultexpr]
-             #:with omit? #'#f)
+             #:with formal #'[name mk]
+             #:with ex #'(#:optional name #f mk ref decl ...))
     (pattern [name:id #:default/omit :defaultexpr]
-             #:with omit? #'#t))
+             #:with formal #'[name mk]
+             #:with ex #'(#:optional name #t mk ref decl ...)))
   (define-syntax-class defaultexpr
     #:attributes (mk ref [decl 1])
     (pattern e:expr
@@ -49,13 +65,18 @@
              #:with mk #'(tmp)
              #:with ref #'tmp
              #:with (decl ...) #'((define tmp (let ([tmp e]) (lambda () tmp))))))
+  (define-syntax-class required-ex #:attributes (name)
+    (pattern (#:required name)))
+  (define-syntax-class optional-ex #:attributes (name omit? mk ref [decl 1])
+    (pattern (#:optional name omit? mk ref decl ...)))
   (define-splicing-syntax-class mut-clause
     (pattern (~seq #:immutable) #:attr mode 'immutable)
     (pattern (~seq #:accept-mutable) #:attr mode 'accept-mutable)
     (pattern (~seq) #:attr mode 'accept-mutable))
   ;; ----
   (syntax-parse stx
-    [(_ name (rf:required-field ... of:optional-field ...) mc:mut-clause)
+    [(_ name (f:field-declaration ...) mc:mut-clause)
+     #:with ((~alt rf:required-ex of:optional-ex) ...) #'(f.ex ...)
      #:attr make-mut-name (case (attribute mc.mode)
                             [(immutable) #f]
                             [(accept-mutable) (format-id #'name "make-mutable-~a" #'name)])
@@ -73,16 +94,17 @@
                    [other-check
                     (case (attribute mc.mode)
                       [(immutable) #'(immutable? v)]
-                      [else #'#t])])
+                      [else #'#t])]
+                   [(f-formal ...) (fix-formals (syntax->list #'(f.formal ...)))])
        #'(begin
            of.decl ... ...
-           (define (make-name rf.name ... [of.name of.mk] ...)
+           (define (make-name f-formal ...)
              (let* ([h (hasheq (~@ 'rf.name rf.name) ...)]
                     [h (cond [(and 'of.omit? (equal? of.name of.mk)) h]
                              [else (hash-set h 'of.name of.name)])]
                     ...)
                h))
-           (~? (define (make-mut-name rf.name ... [of.name of.mk] ...)
+           (~? (define (make-mut-name f-formal ...)
                  (let ([h (make-hasheq)])
                    (hash-set! h 'rf.name rf.name) ...
                    (unless (and 'of.omit? (equal? of.name of.mk))

@@ -102,12 +102,12 @@ If a field has a default value, then it is an optional field: the predicate does
 not check for its presence. An accessor for an optional field takes an optional
 second argument that is used as the failure argument for the @racket[hash-ref]
 call; if the second argument is omitted, the accessor returns the declared
-default value if the field is absent. All fields with defaults must come after
-all required fields. If a field is optional, then the corresponding constructor
-argument is also optional. If the field is declared with @racket[#:default], the
-constructor always includes the field in the hash; if the default is declared
-with @racket[#:default/omit], the constructor omits the field when the
-corresponding argument is the same (@racket[equal?]) to the default value.
+default value if the field is absent. If a field is optional and there is no
+required field after it, then the corresponding constructor argument is also
+optional. If the field is declared with @racket[#:default], the constructor
+always includes the field in the hash; if the default is declared with
+@racket[#:default/omit], the constructor omits the field when the corresponding
+argument is the same (@racket[equal?]) to the default value.
 
 If the @racket[#:immutable] option is given, then the predicate and accessors
 accept only immutable hashes as instances of @racket[view-id]. If the
